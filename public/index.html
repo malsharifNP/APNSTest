@@ -37,7 +37,6 @@
     padding: 64px 20px 80px;
   }
 
-  /* paper texture overlay */
   body::before {
     content: '';
     position: fixed; inset: 0;
@@ -58,7 +57,6 @@
     font-style: italic;
     letter-spacing: -0.01em;
     line-height: 1;
-    color: var(--text);
   }
 
   header p {
@@ -82,7 +80,6 @@
     background: var(--surface);
   }
 
-  /* card */
   .card {
     position: relative; z-index: 1;
     width: 100%; max-width: 500px;
@@ -93,7 +90,6 @@
     box-shadow: 0 2px 0 var(--border), 0 8px 32px rgba(0,0,0,0.06);
   }
 
-  /* field labels */
   label {
     display: block;
     font-size: 0.68rem;
@@ -126,8 +122,9 @@
 
   textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
 
-  .token-row { display: flex; gap: 8px; }
-  .token-row select { flex: 1; }
+  /* device row: dropdown + action buttons */
+  .device-row { display: flex; gap: 8px; align-items: center; }
+  .device-row select { flex: 1; min-width: 0; }
 
   .icon-btn {
     flex-shrink: 0;
@@ -139,13 +136,15 @@
     color: var(--muted);
     cursor: pointer;
     font-size: 1rem;
-    transition: color 0.15s, border-color 0.15s;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    flex-shrink: 0;
   }
   .icon-btn:hover { color: var(--text); border-color: #aaa; }
+  .icon-btn.danger:hover { color: var(--red); border-color: var(--red); background: #fff0f0; }
+  .icon-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
   #tokenManual { display: none; margin-top: 8px; }
 
-  /* templates */
   .templates {
     display: flex; gap: 6px; flex-wrap: wrap;
     margin-top: 8px;
@@ -164,13 +163,8 @@
   }
   .tpl:hover { color: var(--text); border-color: var(--text); }
 
-  /* divider */
-  .rule {
-    height: 1px; background: var(--border);
-    margin: 24px 0;
-  }
+  .rule { height: 1px; background: var(--border); margin: 24px 0; }
 
-  /* send button */
   button[type="submit"] {
     margin-top: 28px;
     width: 100%;
@@ -191,7 +185,7 @@
   button[type="submit"]:active { transform: scale(0.985); }
   button[type="submit"]:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
 
-  /* log */
+  /* activity log */
   .log-section {
     position: relative; z-index: 1;
     width: 100%; max-width: 500px;
@@ -209,8 +203,7 @@
   .log-header button {
     font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
     background: none; border: none; cursor: pointer; padding: 0;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0.08em; text-transform: uppercase;
   }
   .log-header button:hover { color: var(--text); }
 
@@ -225,14 +218,11 @@
     display: flex; align-items: flex-start; gap: 10px;
     animation: slideIn 0.2s ease;
   }
-
   @keyframes slideIn {
     from { opacity: 0; transform: translateY(-6px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-
   .log-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
-
   .log-entry .msg { flex: 1; }
   .log-entry .msg strong { display: block; font-weight: 700; }
   .log-entry .msg small { color: var(--muted); font-size: 0.72rem; }
@@ -265,10 +255,11 @@
 <div class="card">
   <form id="form">
     <label>Device</label>
-    <div class="token-row">
+    <div class="device-row">
       <select id="tokenSelect"></select>
       <button type="button" class="icon-btn" id="refreshBtn" title="Refresh devices">↻</button>
       <button type="button" class="icon-btn" id="manualBtn" title="Enter token manually">✏️</button>
+      <button type="button" class="icon-btn danger" id="removeBtn" title="Remove this device">🗑️</button>
     </div>
     <input id="tokenManual" type="text" placeholder="Paste token…" spellcheck="false" autocomplete="off">
 
@@ -302,115 +293,144 @@
 <div id="toast"></div>
 
 <script>
-const $  = id => document.getElementById(id);
-const entries = [];
+  const $  = id => document.getElementById(id);
+  const entries = [];
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function toast(msg, err = false) {
-  const el = $("toast");
-  el.textContent = msg;
-  el.className = "show" + (err ? " err" : "");
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.className = "", 3000);
-}
+  // ── Toast ───────────────────────────────────────────────────────────────────
+  function toast(msg, err = false) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.className = "show" + (err ? " err" : "");
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.className = "", 3000);
+  }
 
-// ── Log ───────────────────────────────────────────────────────────────────────
-function addLog(icon, title, sub) {
-  entries.unshift({ icon, title, sub, time: new Date().toLocaleTimeString() });
-  renderLog();
-}
+  // ── Log ─────────────────────────────────────────────────────────────────────
+  function addLog(icon, title, sub) {
+    entries.unshift({ icon, title, sub, time: new Date().toLocaleTimeString() });
+    renderLog();
+  }
 
-function renderLog() {
-  const section = $("logSection");
-  const log = $("log");
-  if (!entries.length) { section.style.display = "none"; return; }
-  section.style.display = "block";
-  log.innerHTML = entries.map(e => `
-    <div class="log-entry">
-      <span class="log-icon">${e.icon}</span>
-      <div class="msg">
-        <strong>${e.title}</strong>
-        <small>${e.sub} · ${e.time}</small>
-      </div>
-    </div>`).join("");
-}
+  function renderLog() {
+    const section = $("logSection");
+    const log = $("log");
+    if (!entries.length) { section.style.display = "none"; return; }
+    section.style.display = "block";
+    log.innerHTML = entries.map(e => `
+      <div class="log-entry">
+        <span class="log-icon">${e.icon}</span>
+        <div class="msg">
+          <strong>${e.title}</strong>
+          <small>${e.sub} · ${e.time}</small>
+        </div>
+      </div>`).join("");
+  }
 
-$("clearLog").addEventListener("click", () => { entries.length = 0; renderLog(); });
+  $("clearLog").addEventListener("click", () => { entries.length = 0; renderLog(); });
 
-// ── Tokens ────────────────────────────────────────────────────────────────────
-async function loadTokens() {
-  const sel = $("tokenSelect");
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const { tokens } = await fetch("/tokens").then(r => r.json());
-    if (!tokens.length) {
-      sel.innerHTML = '<option value="">No devices registered yet</option>';
-    } else {
-      sel.innerHTML = tokens.map((t, i) =>
-        `<option value="${t}">Device ${i + 1} — ${t.slice(0,10)}…${t.slice(-6)}</option>`
-      ).join("");
+  // ── Tokens ──────────────────────────────────────────────────────────────────
+  async function loadTokens() {
+    const sel = $("tokenSelect");
+    sel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const { tokens } = await fetch("/tokens").then(r => r.json());
+      if (!tokens.length) {
+        sel.innerHTML = '<option value="">No devices registered yet</option>';
+        $("removeBtn").disabled = true;
+      } else {
+        sel.innerHTML = tokens.map((t, i) =>
+          `<option value="${t}">Device ${i + 1} — ${t.slice(0,10)}…${t.slice(-6)}</option>`
+        ).join("");
+        $("removeBtn").disabled = false;
+      }
+    } catch {
+      sel.innerHTML = '<option value="">Could not load devices</option>';
+      $("removeBtn").disabled = true;
     }
-  } catch {
-    sel.innerHTML = '<option value="">Could not load devices</option>';
   }
-}
 
-$("refreshBtn").addEventListener("click", loadTokens);
+  $("refreshBtn").addEventListener("click", loadTokens);
 
-$("manualBtn").addEventListener("click", () => {
-  const m = $("tokenManual");
-  const show = m.style.display !== "block";
-  m.style.display = show ? "block" : "none";
-  if (show) m.focus();
-});
-
-// ── Templates ─────────────────────────────────────────────────────────────────
-document.querySelectorAll(".tpl").forEach(btn => {
-  btn.addEventListener("click", () => {
-    $("title").value = btn.dataset.title;
-    $("body").value  = btn.dataset.body;
-    $("title").focus();
+  // ── Manual token toggle ─────────────────────────────────────────────────────
+  $("manualBtn").addEventListener("click", () => {
+    const m = $("tokenManual");
+    const show = m.style.display !== "block";
+    m.style.display = show ? "block" : "none";
+    if (show) m.focus();
   });
-});
 
-// ── Send ──────────────────────────────────────────────────────────────────────
-$("form").addEventListener("submit", async e => {
-  e.preventDefault();
+  // ── Remove device ───────────────────────────────────────────────────────────
+  $("removeBtn").addEventListener("click", async () => {
+    const token = $("tokenSelect").value;
+    if (!token) return;
 
-  const token = $("tokenManual").value.trim() || $("tokenSelect").value;
-  const title = $("title").value.trim();
-  const body  = $("body").value.trim();
+    const label = $("tokenSelect").selectedOptions[0]?.text ?? "this device";
+    if (!confirm(`Remove ${label} from the server?`)) return;
 
-  if (!token) { toast("Select or paste a device token", true); return; }
-  if (!title) { toast("Title is required", true); return; }
+    try {
+      const res  = await fetch("/unregister", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
 
-  const btn = $("sendBtn");
-  btn.disabled = true;
-  btn.textContent = "Sending…";
+      toast("Device removed");
+      addLog("🗑️", "Device removed", label);
+      await loadTokens();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
-  try {
-    const res  = await fetch("/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, title, body }),
+  // ── Templates ───────────────────────────────────────────────────────────────
+  document.querySelectorAll(".tpl").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $("title").value = btn.dataset.title;
+      $("body").value  = btn.dataset.body;
+      $("title").focus();
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Server error");
+  });
 
-    toast("✓ Sent!");
-    addLog("✅", title, body || "No body");
-  } catch (err) {
-    toast(err.message, true);
-    addLog("❌", "Failed", err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Send Notification";
-  }
-});
+  // ── Send ────────────────────────────────────────────────────────────────────
+  $("form").addEventListener("submit", async e => {
+    e.preventDefault();
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-loadTokens();
-setInterval(loadTokens, 15000); // auto-refresh every 15s
+    const token = $("tokenManual").value.trim() || $("tokenSelect").value;
+    const title = $("title").value.trim();
+    const body  = $("body").value.trim();
+
+    if (!token) { toast("Select or paste a device token", true); return; }
+    if (!title) { toast("Title is required", true); return; }
+
+    const btn = $("sendBtn");
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+
+    try {
+      const res  = await fetch("/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, title, body }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Server error");
+
+      toast("✓ Sent!");
+      addLog("✅", title, body || "No body");
+    } catch (err) {
+      toast(err.message, true);
+      addLog("❌", "Failed", err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Send Notification";
+    }
+  });
+
+  // ── Init ────────────────────────────────────────────────────────────────────
+  loadTokens();
+  setInterval(loadTokens, 15000);
 </script>
 </body>
 </html>
