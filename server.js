@@ -1,6 +1,4 @@
 // server.js
-// Paste this into your Glitch project's server.js file.
-// Glitch runs it automatically — no deploy step needed.
 
 const express = require("express");
 const apn = require("node-apn");
@@ -11,20 +9,19 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ── APNS Provider ─────────────────────────────────────────────────────────────
-// Reads credentials from Glitch's ".env" panel (the padlock icon in the sidebar)
 
 const provider = new apn.Provider({
   token: {
-    key:    process.env.APNS_AUTH_KEY,  // full contents of your .p8 file
+    key:    process.env.APNS_AUTH_KEY,
     keyId:  process.env.APNS_KEY_ID,
     teamId: process.env.APNS_TEAM_ID,
   },
-  production: false, // keep false for development/simulator builds
+  production: false,
 });
 
 const BUNDLE_ID = process.env.APNS_BUNDLE_ID;
 
-// ── Token store (in-memory, resets on wake — fine for a demo) ─────────────────
+// ── Token store ───────────────────────────────────────────────────────────────
 const tokens = new Set();
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -38,17 +35,27 @@ app.post("/register", (req, res) => {
   res.json({ ok: true });
 });
 
+// Remove a specific device token
+app.post("/unregister", (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: "token required" });
+  const existed = tokens.has(token);
+  tokens.delete(token);
+  console.log(`🗑️  Unregistered: ${token.slice(0, 10)}… (${tokens.size} remaining)`);
+  res.json({ ok: true, existed });
+});
+
 // Dashboard calls this to fire a push
 app.post("/send", async (req, res) => {
   const { token, title, body } = req.body;
   if (!token || !title) return res.status(400).json({ error: "token and title required" });
 
-  const note      = new apn.Notification();
-  note.topic      = BUNDLE_ID;
-  note.expiry     = Math.floor(Date.now() / 1000) + 3600;
-  note.badge      = 1;
-  note.sound      = "default";
-  note.alert      = { title, body: body || "" };
+  const note  = new apn.Notification();
+  note.topic  = BUNDLE_ID;
+  note.expiry = Math.floor(Date.now() / 1000) + 3600;
+  note.badge  = 1;
+  note.sound  = "default";
+  note.alert  = { title, body: body || "" };
 
   try {
     const result = await provider.send(note, token);
